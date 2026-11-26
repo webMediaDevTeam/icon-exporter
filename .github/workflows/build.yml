@@ -1,0 +1,32 @@
+name: Build apps
+on: workflow_dispatch
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pillow resvg-py pyinstaller
+      - run: python build.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Icon-Exporter-windows
+          path: dist/Icon Exporter.exe
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pillow resvg-py pyinstaller
+      - run: python build.py
+      - run: cd dist && ditto -c -k --keepParent "Icon Exporter.app" Icon-Exporter-macos.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Icon-Exporter-macos
+          path: dist/Icon-Exporter-macos.zip
