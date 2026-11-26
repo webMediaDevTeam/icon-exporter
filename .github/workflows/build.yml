@@ -1,9 +1,20 @@
-name: Build apps
-on: workflow_dispatch
+name: Build and release
+
+on:
+  workflow_dispatch:        # test build only, no release
+  push:
+    tags: ["v*"]            # e.g. v1.0.0 builds and publishes a release
 
 jobs:
-  windows:
-    runs-on: windows-latest
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, name: windows }
+          - { os: macos-latest,   name: macos }
+          - { os: ubuntu-22.04,   name: linux }
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -11,22 +22,57 @@ jobs:
           python-version: "3.12"
       - run: pip install pillow resvg-py pyinstaller
       - run: python build.py
+      - name: Package
+        shell: bash
+        run: |
+          mkdir out
+          case "${{ matrix.name }}" in
+            windows) cp "dist/Icon Exporter.exe" out/Icon-Exporter-windows.exe ;;
+            macos)   ditto -c -k --keepParent "dist/Icon Exporter.app" out/Icon-Exporter-macos.zip ;;
+            linux)   cp "dist/Icon Exporter" out/Icon-Exporter-linux && chmod +x out/Icon-Exporter-linux ;;
+          esac
       - uses: actions/upload-artifact@v4
         with:
-          name: Icon-Exporter-windows
-          path: dist/Icon Exporter.exe
+          name: ${{ matrix.name }}
+          path: out/*
 
-  macos:
-    runs-on: macos-latest
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/download-artifact@v4
         with:
-          python-version: "3.12"
-      - run: pip install pillow resvg-py pyinstaller
-      - run: python build.py
-      - run: cd dist && ditto -c -k --keepParent "Icon Exporter.app" Icon-Exporter-macos.zip
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Icon-Exporter-macos
-          path: dist/Icon-Exporter-macos.zip
+          path: out
+          merge-multiple: true
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cat > notes.md <<'NOTES'
+          ## Icon Exporter
+
+          Turn one SVG or image into every app icon: Web, PWA, Apple (iOS and macOS), Windows and Android.
+
+          ### Downloads
+
+          | Platform | File |
+          |---|---|
+          | Windows | `Icon-Exporter-windows.exe` |
+          | macOS (Apple Silicon) | `Icon-Exporter-macos.zip` (unzip, then right-click the app and choose Open) |
+          | Linux | `Icon-Exporter-linux` (run `chmod +x` first) |
+
+          The apps are unsigned, so Windows SmartScreen may show a warning (More info, then Run anyway).
+
+          ---
+
+          ### What's changed
+          NOTES
+          sed -i 's/^          //' notes.md
+          gh release create "$GITHUB_REF_NAME" out/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Icon Exporter $GITHUB_REF_NAME" \
+            --notes-file notes.md \
+            --generate-notes
